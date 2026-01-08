@@ -197,7 +197,7 @@ async function generateImageWithGemini(payload, instruction) {
           text: `REFERENCE_${i + 1}: guía SOLO de estilo/continuidad. Usa su paleta de color, iluminación y textura, pero NO copies su geometría ni encuadre 1:1.`
         });
         parts.push({
-          inline_data: {
+          inline_ {
             mime_type: ref.mimeType,
             data: ref.data
           }
@@ -211,7 +211,7 @@ async function generateImageWithGemini(payload, instruction) {
       if (maskImage?.data && maskImage?.mimeType) {
         parts.push({ text: "MASK: Define el área a modificar. BLANCO = zona a modificar, NEGRO = zona a conservar intacta." });
         parts.push({
-          inline_data: {
+          inline_ {
             mime_type: maskImage.mimeType,
             data: maskImage.data
           }
@@ -222,7 +222,7 @@ async function generateImageWithGemini(payload, instruction) {
       if (baseImage?.data && baseImage?.mimeType) {
         parts.push({ text: "BASE_CROP: La imagen principal que DEBES editar. Es la última imagen antes de este texto." });
         parts.push({
-          inline_data: {
+          inline_ {
             mime_type: baseImage.mimeType,
             data: baseImage.data
           }
@@ -233,7 +233,7 @@ async function generateImageWithGemini(payload, instruction) {
       if (baseImage?.data && baseImage?.mimeType) {
         parts.push({ text: "BASE_IMAGE: imagen a editar sin selección activa." });
         parts.push({
-          inline_data: {
+          inline_ {
             mime_type: baseImage.mimeType,
             data: baseImage.data
           }
@@ -329,7 +329,7 @@ async function generateImageWithGemini(payload, instruction) {
       }
       
       return {
-        dataUrl: `${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`,
+        dataUrl: `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`, // ¡CORRECCIÓN CRÍTICA! Añadido prefijo "data:"
         candidate
       };
     } catch (error) {
@@ -534,7 +534,7 @@ SALIDA: Exclusivamente la imagen resultante debe ser de la más alta calidad en 
     
     res.json({
       success: true,
-      dataUrl: result.dataUrl,
+      dataUrl: result.dataUrl, // ¡ESTO AHORA TIENE EL FORMATO CORRECTO CON EL PREFIJO "data:"!
       creditsUsed: totalCost,
       remainingCredits: remainingCredits
     });
