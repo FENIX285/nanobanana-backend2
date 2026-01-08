@@ -23,20 +23,28 @@ console.log(`🔧 MongoDB URI configurada: ${process.env.MONGODB_URI.replace(/\/
 console.log(`🔑 Gemini API Key presente: ${process.env.GEMINI_API_KEY.substring(0, 8)}...`);
 
 // ========================================
-// CONFIGURACIÓN DE MIDDLEWARES
+// CONFIGURACIÓN DE MIDDLEWARES CON LÍMITES AMPLIOS
 // ========================================
+// Configurar límites antes de cualquier otro middleware
+app.use(express.json({ 
+  limit: '50mb', // Aumentado a 50MB para manejar imágenes grandes
+  strict: false,
+  verify: (req, res, buf) => {
+    req.rawBody = buf; // Guardar body crudo para debugging
+  }
+}));
+
+app.use(express.urlencoded({
+  limit: '50mb',
+  extended: true,
+  parameterLimit: 50000
+}));
+
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true,
   maxAge: 86400 // 24 horas de caché para preflight requests
-}));
-
-app.use(express.json({ 
-  limit: '10mb',
-  verify: (req, res, buf) => {
-    req.rawBody = buf; // Guardar body crudo para debugging si es necesario
-  }
 }));
 
 // ========================================
@@ -170,7 +178,7 @@ async function generateImageWithGemini(payload, instruction) {
           text: `REFERENCE_${i + 1}: guía SOLO de estilo/continuidad. Usa su paleta de color, iluminación y textura, pero NO copies su geometría ni encuadre 1:1.`
         });
         parts.push({
-          inline_data: {  // ¡CORREGIDO! inline_data en lugar de inline_
+          inline_data: {
             mime_type: ref.mimeType,
             data: ref.data
           }
@@ -184,7 +192,7 @@ async function generateImageWithGemini(payload, instruction) {
       if (maskImage?.data && maskImage?.mimeType) {
         parts.push({ text: "MASK: Define el área a modificar. BLANCO = zona a modificar, NEGRO = zona a conservar intacta." });
         parts.push({
-          inline_data: {  // ¡CORREGIDO!
+          inline_data: {
             mime_type: maskImage.mimeType,
             data: maskImage.data
           }
@@ -195,7 +203,7 @@ async function generateImageWithGemini(payload, instruction) {
       if (baseImage?.data && baseImage?.mimeType) {
         parts.push({ text: "BASE_CROP: La imagen principal que DEBES editar. Es la última imagen antes de este texto." });
         parts.push({
-          inline_data: {  // ¡CORREGIDO!
+          inline_data: {
             mime_type: baseImage.mimeType,
             data: baseImage.data
           }
@@ -206,7 +214,7 @@ async function generateImageWithGemini(payload, instruction) {
       if (baseImage?.data && baseImage?.mimeType) {
         parts.push({ text: "BASE_IMAGE: imagen a editar sin selección activa." });
         parts.push({
-          inline_data: {  // ¡CORREGIDO!
+          inline_data: {
             mime_type: baseImage.mimeType,
             data: baseImage.data
           }
