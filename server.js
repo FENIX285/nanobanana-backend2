@@ -2,7 +2,6 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { MongoClient, ServerApiVersion } = require('mongodb');
-const jwt = require('jsonwebtoken');
 const fetch = require('node-fetch');
 const app = express();
 const port = process.env.PORT || 3000;
@@ -57,47 +56,26 @@ async function connectToDatabase() {
   }
 }
 
-// Middleware de autenticación
-function authenticateToken(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-  
-  if (!token) {
-    return res.status(401).json({ message: 'Token de acceso requerido' });
+// Función para verificar token simple contra MongoDB
+async function verifyUserToken(token) {
+  if (!token || typeof token !== 'string' || token.trim() === '') {
+    throw new Error('Token inválido o vacío');
   }
   
-  jwt.verify(token, process.env.JWT_SECRET, async (err, user) => {
-    if (err) {
-      return res.status(403).json({ message: 'Token inválido' });
-    }
-    
-    // Buscar usuario en la base de datos
-    const dbUser = await usersCollection.findOne({ token: user.token });
-    if (!dbUser) {
-      return res.status(404).json({ message: 'Usuario no encontrado' });
-    }
-    
-    req.user = dbUser;
-    next();
-  });
+  const user = await usersCollection.findOne({ token: token.trim() });
+  if (!user) {
+    throw new Error('Usuario no encontrado');
+  }
+  
+  return user;
 }
 
 // Ruta para verificar token y obtener créditos
 app.post('/api/auth/verify-token', async (req, res) => {
   const { token } = req.body;
   
-  if (!token) {
-    return res.status(400).json({ message: 'Token requerido' });
-  }
-  
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await usersCollection.findOne({ token: decoded.token });
-    
-    if (!user) {
-      return res.status(404).json({ message: 'Usuario no encontrado' });
-    }
-    
+    const user = await verifyUserToken(token);
     res.json({
       success: true,
       userId: user._id.toString(),
@@ -105,14 +83,17 @@ app.post('/api/auth/verify-token', async (req, res) => {
     });
   } catch (error) {
     console.error("Error verificando token:", error);
-    res.status(401).json({ message: 'Token inválido o expirado' });
+    res.status(401).json({ 
+      success: false,
+      message: error.message || 'Token inválido' 
+    });
   }
 });
 
 // Función para generar imagen usando Gemini API
 async function generateImageWithGemini(payload, instruction) {
   try {
-    const { model, prompt, operation, referenceImages, baseImage, maskImage, aspectRatio, resolution, candidateCount } = payload;
+    const { model, prompt, operation, referenceImages, baseImage, maskImage, aspectRatio, resolution } = payload;
     
     // Preparar las partes del contenido según el tipo de operación
     const parts = [];
@@ -129,9 +110,9 @@ async function generateImageWithGemini(payload, instruction) {
           text: `REFERENCE_${idx}: guía SOLO de estilo/continuidad. Usa su paleta de color, iluminación y textura, pero NO copies su geometría ni encuadre 1:1.`
         });
         parts.push({
-          inline_data: {
+          inline_ {
             mime_type: ref.mimeType,
-            data: ref.data
+             ref.data
           }
         });
       }
@@ -141,23 +122,23 @@ async function generateImageWithGemini(payload, instruction) {
     if (operation === 'inpaint' && maskImage && baseImage) {
       // Añadir máscara
       parts.push({
-        text: "MASK: Define el área a modificar. BLANCO = generar, NEGRO = conservar."
+        text: "MASK: Define el área a modificar. BLANCO = zona a modificar, NEGRO = zona a conservar intacta."
       });
       parts.push({
-        inline_data: {
+        inline_ {
           mime_type: maskImage.mimeType,
-          data: maskImage.data
+           maskImage.data
         }
       });
       
       // Añadir imagen base a editar
       parts.push({
-        text: "BASE_CROP: Lienzo principal a editar. Aplica el prompt SOLO dentro de la zona blanca de la MASK."
+        text: "BASE_CROP: La imagen principal que DEBES editar. Es la última imagen antes de este texto."
       });
       parts.push({
         inline_data: {
           mime_type: baseImage.mimeType,
-          data: baseImage.data
+           baseImage.data
         }
       });
     } 
@@ -167,7 +148,7 @@ async function generateImageWithGemini(payload, instruction) {
         text: "BASE_IMAGE: imagen a editar sin selección activa."
       });
       parts.push({
-        inline_data: {
+        inline_ {
           mime_type: baseImage.mimeType,
           data: baseImage.data
         }
@@ -236,7 +217,7 @@ async function generateImageWithGemini(payload, instruction) {
     }
     
     return {
-      dataUrl: `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`,
+      dataUrl: `${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`,
       raw: candidate
     };
   } catch (error) {
@@ -246,26 +227,36 @@ async function generateImageWithGemini(payload, instruction) {
 }
 
 // Ruta para generar/editar imágenes
-app.post('/api/generate', authenticateToken, async (req, res) => {
-  const { user } = req;
-  const payload = req.body;
+app.post('/api/generate', async (req, res) => {
+  // Obtener token del header de autorización
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
   
-  // Validar payload
-  if (!payload.model || !payload.prompt) {
-    return res.status(400).json({ message: 'Modelo y prompt son requeridos' });
-  }
-  
-  const costPerImage = MODEL_COSTS[payload.model] || 8;
-  const totalCost = costPerImage;
-  
-  // Verificar créditos suficientes
-  if (user.creditsBalance < totalCost) {
-    return res.status(400).json({ 
-      message: `Créditos insuficientes. Se necesitan ${totalCost} créditos.` 
-    });
+  if (!token) {
+    return res.status(401).json({ message: 'Token de acceso requerido' });
   }
   
   try {
+    // Verificar token contra MongoDB
+    const user = await verifyUserToken(token);
+    
+    const payload = req.body;
+    
+    // Validar payload
+    if (!payload.model || !payload.prompt) {
+      return res.status(400).json({ message: 'Modelo y prompt son requeridos' });
+    }
+    
+    const costPerImage = MODEL_COSTS[payload.model] || 8;
+    const totalCost = costPerImage;
+    
+    // Verificar créditos suficientes
+    if (user.creditsBalance < totalCost) {
+      return res.status(400).json({ 
+        message: `Créditos insuficientes. Se necesitan ${totalCost} créditos.` 
+      });
+    }
+    
     let result;
     let instruction = '';
     
@@ -353,18 +344,23 @@ app.post('/api/generate', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error("Error en generación de imagen:", error);
     
-    // Register failed transaction
-    await transactionsCollection.insertOne({
-      userId: user._id,
-      operation: payload.operation,
-      model: payload.model,
-      creditsUsed: 0,
-      creditsRemaining: user.creditsBalance,
-      timestamp: new Date(),
-      success: false,
-      errorMessage: error.message
-    });
+    // Si el error es de autenticación, devolver 401
+    if (error.message.includes('Token inválido') || error.message.includes('Usuario no encontrado')) {
+      return res.status(401).json({ 
+        success: false,
+        message: error.message
+      });
+    }
     
+    // Si el error es de créditos insuficientes, devolver 400
+    if (error.message.includes('Créditos insuficientes')) {
+      return res.status(400).json({ 
+        success: false,
+        message: error.message
+      });
+    }
+    
+    // Otros errores
     res.status(500).json({ 
       success: false,
       message: `Error al generar imagen: ${error.message}`
@@ -375,6 +371,16 @@ app.post('/api/generate', authenticateToken, async (req, res) => {
 // Ruta de salud para Railway
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Endpoint para probar la conexión
+app.get('/test', async (req, res) => {
+  try {
+    await client.db("admin").command({ ping: 1 });
+    res.json({ message: 'Conexión a MongoDB exitosa' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // Iniciar servidor
