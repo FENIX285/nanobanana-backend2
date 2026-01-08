@@ -11,11 +11,13 @@
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "jsonwebtoken": "^9.0.2",
     "mongodb": "^6.3.0",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "2.6.11"  // ¡IMPORTANTE: Versión 2.x para CommonJS!
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
