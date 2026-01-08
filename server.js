@@ -2,9 +2,28 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { MongoClient, ServerApiVersion } = require('mongodb');
-const fetch = require('node-fetch');
 const app = express();
 const port = process.env.PORT || 3000;
+
+// ========================================
+// IMPORTAR FETCH CORRECTAMENTE PARA NODE.JS
+// ========================================
+let fetch;
+try {
+  // Intentar importar node-fetch v2 (CommonJS)
+  fetch = require('node-fetch');
+  console.log('✅ node-fetch v2 importado correctamente');
+} catch (e1) {
+  try {
+    // Intentar importar node-fetch v3+ (ESM)
+    fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+    console.log('✅ node-fetch v3+ importado correctamente');
+  } catch (e2) {
+    console.error('❌ Error importando node-fetch:', e2.message);
+    console.error('Solución: Ejecuta "npm install node-fetch@2" en tu proyecto');
+    process.exit(1);
+  }
+}
 
 // ========================================
 // VERIFICACIÓN INICIAL DE VARIABLES CLAVE
@@ -252,6 +271,11 @@ async function generateImageWithGemini(payload, instruction) {
     const timeoutId = setTimeout(() => controller.abort(), 90000); // 90 segundos
     
     try {
+      // Asegurarse de que fetch esté disponible
+      if (typeof fetch !== 'function') {
+        throw new Error('La función fetch no está disponible. Verifica la instalación de node-fetch.');
+      }
+      
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`,
         {
@@ -559,6 +583,12 @@ SALIDA: Exclusivamente la imagen resultante debe ser de la más alta calidad en 
       statusCode = 504;
       userMessage = 'La operación tardó demasiado. Intenta con un prompt más simple.';
     }
+    // Nuevo caso para el error de fetch
+    else if (error.message.includes('fetch is not a function') || 
+             error.message.includes('fetch no está disponible')) {
+      statusCode = 503;
+      userMessage = 'Servicio temporalmente no disponible. Error en conexión con API de Gemini.';
+    }
     
     res.status(statusCode).json({
       success: false,
@@ -581,7 +611,8 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: `${uptimeMinutes}m ${uptimeSeconds}s`,
     nodeVersion: process.version,
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    fetchAvailable: typeof fetch === 'function'
   });
 });
 
@@ -602,7 +633,8 @@ app.get('/test-db', async (req, res) => {
         token: sampleUser.token.substring(0, 5) + '...',
         creditsBalance: sampleUser.creditsBalance
       } : null,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      fetchAvailable: typeof fetch === 'function'
     });
   } catch (error) {
     console.error('❌ Error en /test-db:', error.message);
@@ -681,6 +713,12 @@ async function startServer() {
     console.log('🚀 Iniciando servidor Nano Banana Backend...');
     console.log(`🔧 Puerto: ${port}`);
     console.log(`🌐 CORS habilitado para todos los orígenes`);
+    console.log(`⚡ fetch disponible: ${typeof fetch === 'function' ? 'SÍ' : 'NO - ERROR CRÍTICO'}`);
+    
+    if (typeof fetch !== 'function') {
+      console.error('❌ ERROR CRÍTICO: fetch no está disponible. Esto impedirá conexiones a Gemini API.');
+      console.error('Solución: Instala node-fetch v2 con: npm install node-fetch@2');
+    }
     
     // Conexión inicial a base de datos
     await connectToDatabase();
