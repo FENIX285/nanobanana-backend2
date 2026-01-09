@@ -197,7 +197,7 @@ async function generateImageWithGemini(payload, instruction) {
           text: `REFERENCE_${i + 1}: guía SOLO de estilo/continuidad. Usa su paleta de color, iluminación y textura, pero NO copies su geometría ni encuadre 1:1.`
         });
         parts.push({
-          inline_data: {  // ¡CORREGIDO! inline_data: { en lugar de inline_ {
+          inline_data: {
             mime_type: ref.mimeType,
             data: ref.data
           }
@@ -211,7 +211,7 @@ async function generateImageWithGemini(payload, instruction) {
       if (maskImage?.data && maskImage?.mimeType) {
         parts.push({ text: "MASK: Define el área a modificar. BLANCO = zona a modificar, NEGRO = zona a conservar intacta." });
         parts.push({
-          inline_data: {  // ¡CORREGIDO!
+          inline_data: {
             mime_type: maskImage.mimeType,
             data: maskImage.data
           }
@@ -222,7 +222,7 @@ async function generateImageWithGemini(payload, instruction) {
       if (baseImage?.data && baseImage?.mimeType) {
         parts.push({ text: "BASE_CROP: La imagen principal que DEBES editar. Es la última imagen antes de este texto." });
         parts.push({
-          inline_data: {  // ¡CORREGIDO!
+          inline_data: {
             mime_type: baseImage.mimeType,
             data: baseImage.data
           }
@@ -233,7 +233,7 @@ async function generateImageWithGemini(payload, instruction) {
       if (baseImage?.data && baseImage?.mimeType) {
         parts.push({ text: "BASE_IMAGE: imagen a editar sin selección activa." });
         parts.push({
-          inline_data: {  // ¡CORREGIDO!
+          inline_data: {
             mime_type: baseImage.mimeType,
             data: baseImage.data
           }
@@ -247,7 +247,7 @@ async function generateImageWithGemini(payload, instruction) {
     // Configuración de generación
     const genConfig = {
       responseModalities: ["IMAGE"],
-      candidateCount: 1
+      candidateCount: 1 // Siempre 1 por llamada, se manejará el batch en el endpoint
     };
     
     // Configuración específica por modelo
@@ -414,6 +414,7 @@ app.post('/api/generate', async (req, res) => {
     const payload = req.body;
     const model = payload.model;
     const prompt = payload.prompt;
+    const candidateCount = parseInt(payload.candidateCount) || 1;
     
     // Validar payload
     if (!model || !prompt) {
@@ -431,14 +432,14 @@ app.post('/api/generate', async (req, res) => {
     }
     
     const costPerImage = MODEL_COSTS[model];
-    const totalCost = costPerImage;
+    const totalCost = costPerImage * candidateCount;
     
-    console.log(`💰 Costo de operación: ${totalCost} créditos. Créditos disponibles: ${user.creditsBalance}`);
+    console.log(`💰 Costo de operación: ${totalCost} créditos (${costPerImage} × ${candidateCount} variaciones). Créditos disponibles: ${user.creditsBalance}`);
     
     if (user.creditsBalance < totalCost) {
       return res.status(400).json({ 
         success: false, 
-        message: `Créditos insuficientes. Necesitas ${totalCost} créditos, pero solo tienes ${user.creditsBalance}.` 
+        message: `Créditos insuficientes. Necesitas ${totalCost} créditos para ${candidateCount} variaciones, pero solo tienes ${user.creditsBalance}.` 
       });
     }
     
@@ -499,8 +500,15 @@ SALIDA: Exclusivamente la imagen resultante debe ser de la más alta calidad en 
         `.trim();
     }
     
-    // Generar imagen
-    const result = await generateImageWithGemini(payload, instruction);
+    // Generar múltiples variaciones en paralelo
+    console.log(`🔄 Generando ${candidateCount} variaciones...`);
+    const results = await Promise.all(
+      Array(candidateCount).fill().map(() => 
+        generateImageWithGemini(payload, instruction)
+      )
+    );
+    
+    console.log(`✅ Generadas ${results.length} variaciones exitosamente`);
     
     // Actualizar créditos
     const remainingCredits = user.creditsBalance - totalCost;
@@ -527,14 +535,16 @@ SALIDA: Exclusivamente la imagen resultante debe ser de la más alta calidad en 
       creditsRemaining: remainingCredits,
       timestamp: new Date(),
       success: true,
-      prompt: prompt.substring(0, 150) + (prompt.length > 150 ? '...' : '')
+      prompt: prompt.substring(0, 150) + (prompt.length > 150 ? '...' : ''),
+      variationsCount: candidateCount
     });
     
     console.log('✅ Transacción registrada exitosamente');
     
+    // Devolver múltiples URLs
     res.json({
       success: true,
-      dataUrl: result.dataUrl,
+      dataUrls: results.map(r => r.dataUrl),
       creditsUsed: totalCost,
       remainingCredits: remainingCredits
     });
@@ -554,7 +564,8 @@ SALIDA: Exclusivamente la imagen resultante debe ser de la más alta calidad en 
           timestamp: new Date(),
           success: false,
           errorMessage: error.message.substring(0, 200),
-          prompt: req.body.prompt?.substring(0, 150) + (req.body.prompt?.length > 150 ? '...' : '')
+          prompt: req.body.prompt?.substring(0, 150) + (req.body.prompt?.length > 150 ? '...' : ''),
+          variationsCount: parseInt(req.body.candidateCount) || 1
         });
         console.log('✅ Transacción fallida registrada');
       } catch (logError) {
