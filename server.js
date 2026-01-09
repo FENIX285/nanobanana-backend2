@@ -197,9 +197,9 @@ async function generateImageWithGemini(payload, instruction) {
           text: `REFERENCE_${i + 1}: guía SOLO de estilo/continuidad. Usa su paleta de color, iluminación y textura, pero NO copies su geometría ni encuadre 1:1.`
         });
         parts.push({
-          inline_ {
+          inline_data: {  // ¡CORREGIDO! inline_data: { en lugar de inline_ {
             mime_type: ref.mimeType,
-             ref.data
+            data: ref.data
           }
         });
       }
@@ -211,9 +211,9 @@ async function generateImageWithGemini(payload, instruction) {
       if (maskImage?.data && maskImage?.mimeType) {
         parts.push({ text: "MASK: Define el área a modificar. BLANCO = zona a modificar, NEGRO = zona a conservar intacta." });
         parts.push({
-          inline_ {
+          inline_data: {  // ¡CORREGIDO!
             mime_type: maskImage.mimeType,
-             maskImage.data
+            data: maskImage.data
           }
         });
       }
@@ -222,9 +222,9 @@ async function generateImageWithGemini(payload, instruction) {
       if (baseImage?.data && baseImage?.mimeType) {
         parts.push({ text: "BASE_CROP: La imagen principal que DEBES editar. Es la última imagen antes de este texto." });
         parts.push({
-          inline_ {
+          inline_data: {  // ¡CORREGIDO!
             mime_type: baseImage.mimeType,
-             baseImage.data
+            data: baseImage.data
           }
         });
       }
@@ -233,9 +233,9 @@ async function generateImageWithGemini(payload, instruction) {
       if (baseImage?.data && baseImage?.mimeType) {
         parts.push({ text: "BASE_IMAGE: imagen a editar sin selección activa." });
         parts.push({
-          inline_ {
+          inline_data: {  // ¡CORREGIDO!
             mime_type: baseImage.mimeType,
-             baseImage.data
+            data: baseImage.data
           }
         });
       }
