@@ -174,7 +174,7 @@ async function verifyUserToken(token) {
 
 async function generateImageWithGemini(payload, instruction) {
   try {
-    const { model, prompt, operation, referenceImages, baseImage, maskImage, aspectRatio, resolution, candidateCount } = payload;
+    const { model, prompt, operation, referenceImages, baseImage, maskImage, aspectRatio, resolution } = payload;
     
     // Validar parámetros críticos
     if (!model || !prompt) {
@@ -197,7 +197,7 @@ async function generateImageWithGemini(payload, instruction) {
           text: `REFERENCE_${i + 1}: guía SOLO de estilo/continuidad. Usa su paleta de color, iluminación y textura, pero NO copies su geometría ni encuadre 1:1.`
         });
         parts.push({
-          inline_data: {
+          inline_data: { 
             mime_type: ref.mimeType,
             data: ref.data
           }
@@ -244,10 +244,10 @@ async function generateImageWithGemini(payload, instruction) {
     // Prompt del usuario
     parts.push({ text: `PROMPT_USUARIO:\n${prompt}` });
     
-    // Configuración de generación - ¡AHORA CON candidateCount VARIABLE!
+    // Configuración de generación
     const genConfig = {
       responseModalities: ["IMAGE"],
-      candidateCount: candidateCount || 1 // ¡CORREGIDO! Ahora respeta el número solicitado
+      candidateCount: 1
     };
     
     // Configuración específica por modelo
@@ -263,7 +263,7 @@ async function generateImageWithGemini(payload, instruction) {
       }
     }
     
-    console.log(`🚀 Llamando a Gemini API con modelo: ${model}, operación: ${operation}, candidatos: ${candidateCount}`);
+    console.log(`🚀 Llamando a Gemini API con modelo: ${model}, operación: ${operation}`);
     console.log(`📝 Prompt: "${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}"`);
     
     // Llamada a API con timeout
@@ -313,36 +313,24 @@ async function generateImageWithGemini(payload, instruction) {
       const data = await response.json();
       console.log('✅ Respuesta exitosa de Gemini API');
       
-      // Procesar múltiples candidatos
-      const candidates = data.candidates || [];
-      const results = [];
-      
-      for (const candidate of candidates) {
-        if (candidate.finishReason === 'IMAGE_SAFETY') {
-          console.warn('⚠️ Imagen rechazada por motivos de seguridad');
-          continue; // Saltar este candidato, pero continuar con los demás
-        }
-        
-        const imagePart = candidate.content?.parts?.find(p => p.inlineData?.data);
-        if (!imagePart) {
-          continue; // Saltar candidatos sin imagen
-        }
-        
-        results.push({
-          dataUrl: `${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`,
-          candidate
-        });
+      const candidate = data.candidates?.[0];
+      if (!candidate) {
+        throw new Error('No se obtuvo candidato en la respuesta de Gemini');
       }
       
-      if (results.length === 0) {
-        throw new Error('No se obtuvo ninguna imagen válida en la respuesta de Gemini');
+      if (candidate.finishReason === 'IMAGE_SAFETY') {
+        console.warn('⚠️ Imagen rechazada por motivos de seguridad');
+        throw new Error('La imagen fue rechazada por políticas de seguridad. Modifica tu prompt.');
+      }
+      
+      const imagePart = candidate.content?.parts?.find(p => p.inlineData?.data);
+      if (!imagePart) {
+        throw new Error('No se encontró imagen en la respuesta de Gemini');
       }
       
       return {
-        success: true,
-        results,
-        totalCandidates: candidates.length,
-        validResults: results.length
+        dataUrl: `${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`,
+        candidate
       };
     } catch (error) {
       clearTimeout(timeoutId);
@@ -403,6 +391,46 @@ const MODEL_COSTS = {
   "gemini-3-pro-image-preview": 32
 };
 
+// NUEVA FUNCIÓN: Generar múltiples variaciones
+async function generateMultipleVariations(payload, instruction, count) {
+  const results = [];
+  const errors = [];
+  
+  console.log(`🔄 Generando ${count} variaciones...`);
+  
+  for (let i = 0; i < count; i++) {
+    try {
+      console.log(`🔄 Generando variación ${i + 1} de ${count}...`);
+      
+      // Añadir sufijo único al prompt para obtener variaciones diferentes
+      const variationPayload = {
+        ...payload,
+        prompt: `${payload.prompt} (variación ${i + 1})`
+      };
+      
+      const result = await generateImageWithGemini(variationPayload, instruction);
+      results.push(result.dataUrl);
+      
+      // Pequeña pausa entre solicitudes para evitar límites de tasa
+      if (i < count - 1) {
+        await new Promise(resolve => setTimeout(resolve, 750));
+      }
+      
+      console.log(`✅ Variación ${i + 1} generada exitosamente`);
+    } catch (error) {
+      console.error(`❌ Error generando variación ${i + 1}:`, error.message);
+      errors.push(error.message);
+      // No lanzar error para continuar con las demás variaciones
+    }
+  }
+  
+  if (results.length === 0) {
+    throw new Error('No se pudo generar ninguna variación exitosamente. Errores: ' + errors.join(', '));
+  }
+  
+  return results;
+}
+
 app.post('/api/generate', async (req, res) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader?.split(' ')[1];
@@ -426,7 +454,7 @@ app.post('/api/generate', async (req, res) => {
     const payload = req.body;
     const model = payload.model;
     const prompt = payload.prompt;
-    const candidateCount = payload.candidateCount || 1;
+    const candidateCount = parseInt(payload.candidateCount) || 1;
     
     // Validar payload
     if (!model || !prompt) {
@@ -446,7 +474,7 @@ app.post('/api/generate', async (req, res) => {
     const costPerImage = MODEL_COSTS[model];
     const totalCost = costPerImage * candidateCount;
     
-    console.log(`💰 Costo de operación: ${totalCost} créditos (${costPerImage} x ${candidateCount} imágenes). Créditos disponibles: ${user.creditsBalance}`);
+    console.log(`💰 Costo de operación: ${totalCost} créditos. Créditos disponibles: ${user.creditsBalance}`);
     
     if (user.creditsBalance < totalCost) {
       return res.status(400).json({ 
@@ -512,15 +540,30 @@ SALIDA: Exclusivamente la imagen resultante debe ser de la más alta calidad en 
         `.trim();
     }
     
-    // Generar imagen - ¡AHORA SOPORTA MÚLTIPLES CANDIDATOS!
-    const result = await generateImageWithGemini(payload, instruction);
+    // Generar imágenes (múltiples si candidateCount > 1)
+    let dataUrls = [];
     
-    if (!result.success || result.results.length === 0) {
+    if (candidateCount === 1) {
+      // Generar una sola imagen
+      const result = await generateImageWithGemini(payload, instruction);
+      dataUrls = [result.dataUrl];
+    } else {
+      // Generar múltiples variaciones
+      dataUrls = await generateMultipleVariations(payload, instruction, candidateCount);
+    }
+    
+    // Filtrar resultados vacíos o nulos
+    const validDataUrls = dataUrls.filter(url => url && url.trim() !== '');
+    
+    if (validDataUrls.length === 0) {
       throw new Error('No se generaron imágenes válidas');
     }
     
-    // Actualizar créditos
-    const remainingCredits = user.creditsBalance - totalCost;
+    // Actualizar créditos (solo por las imágenes generadas exitosamente)
+    const successfulCount = validDataUrls.length;
+    const creditsUsed = costPerImage * successfulCount;
+    const remainingCredits = user.creditsBalance - creditsUsed;
+    
     const { users, transactions } = await connectToDatabase();
     
     const updateResult = await users.updateOne(
@@ -540,25 +583,22 @@ SALIDA: Exclusivamente la imagen resultante debe ser de la más alta calidad en 
       userId: user._id,
       operation: operationType,
       model: model,
-      creditsUsed: totalCost,
+      creditsUsed: creditsUsed,
       creditsRemaining: remainingCredits,
       timestamp: new Date(),
       success: true,
       prompt: prompt.substring(0, 150) + (prompt.length > 150 ? '...' : ''),
-      candidateCount: candidateCount,
-      validImages: result.results.length
+      variationsCount: successfulCount
     });
     
-    console.log(`✅ Transacción registrada exitosamente: ${result.results.length}/${candidateCount} imágenes válidas`);
+    console.log('✅ Transacción registrada exitosamente');
     
-    // Devolver TODAS las imágenes generadas con éxito
     res.json({
       success: true,
-      dataUrls: result.results.map(r => r.dataUrl),
-      creditsUsed: totalCost,
+      dataUrls: validDataUrls,
+      creditsUsed: creditsUsed,
       remainingCredits: remainingCredits,
-      totalRequested: candidateCount,
-      totalGenerated: result.results.length
+      variationsCount: successfulCount
     });
   } catch (error) {
     console.error('❌ Error en /api/generate:', error.message);
@@ -576,7 +616,8 @@ SALIDA: Exclusivamente la imagen resultante debe ser de la más alta calidad en 
           timestamp: new Date(),
           success: false,
           errorMessage: error.message.substring(0, 200),
-          prompt: req.body.prompt?.substring(0, 150) + (req.body.prompt?.length > 150 ? '...' : '')
+          prompt: req.body.prompt?.substring(0, 150) + (req.body.prompt?.length > 150 ? '...' : ''),
+          variationsCount: req.body.candidateCount || 1
         });
         console.log('✅ Transacción fallida registrada');
       } catch (logError) {
@@ -605,22 +646,16 @@ SALIDA: Exclusivamente la imagen resultante debe ser de la más alta calidad en 
       statusCode = 504;
       userMessage = 'La operación tardó demasiado. Intenta con un prompt más simple.';
     }
-    // Nuevo caso para el error de fetch
     else if (error.message.includes('fetch is not a function') || 
              error.message.includes('fetch no está disponible')) {
       statusCode = 503;
       userMessage = 'Servicio temporalmente no disponible. Error en conexión con API de Gemini.';
     }
-    else if (error.message.includes('No se generaron imágenes válidas') || 
-             error.message.includes('No se obtuvo ninguna imagen válida')) {
-      statusCode = 400;
-      userMessage = 'No se pudieron generar imágenes válidas. Intenta con un prompt diferente.';
-    }
     
     res.status(statusCode).json({
       success: false,
       message: userMessage,
-      details: error.message // Solo para debugging, en producción quitar
+      details: error.message
     });
   }
 });
