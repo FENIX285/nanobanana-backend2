@@ -174,7 +174,7 @@ async function verifyUserToken(token) {
 
 async function generateImageWithGemini(payload, instruction) {
   try {
-    const { model, prompt, operation, referenceImages, baseImage, maskImage, aspectRatio, resolution } = payload;
+    const { model, prompt, operation, referenceImages, baseImage, maskImage, aspectRatio, resolution, candidateCount = 1 } = payload;
     
     // Validar parámetros críticos
     if (!model || !prompt) {
@@ -197,7 +197,7 @@ async function generateImageWithGemini(payload, instruction) {
           text: `REFERENCE_${i + 1}: guía SOLO de estilo/continuidad. Usa su paleta de color, iluminación y textura, pero NO copies su geometría ni encuadre 1:1.`
         });
         parts.push({
-          inline_data: {  // ¡CORREGIDO! inline_data: { en lugar de inline_ {
+          inline_data: {
             mime_type: ref.mimeType,
             data: ref.data
           }
@@ -211,7 +211,7 @@ async function generateImageWithGemini(payload, instruction) {
       if (maskImage?.data && maskImage?.mimeType) {
         parts.push({ text: "MASK: Define el área a modificar. BLANCO = zona a modificar, NEGRO = zona a conservar intacta." });
         parts.push({
-          inline_data: {  // ¡CORREGIDO!
+          inline_data: {
             mime_type: maskImage.mimeType,
             data: maskImage.data
           }
@@ -222,7 +222,7 @@ async function generateImageWithGemini(payload, instruction) {
       if (baseImage?.data && baseImage?.mimeType) {
         parts.push({ text: "BASE_CROP: La imagen principal que DEBES editar. Es la última imagen antes de este texto." });
         parts.push({
-          inline_data: {  // ¡CORREGIDO!
+          inline_data: {
             mime_type: baseImage.mimeType,
             data: baseImage.data
           }
@@ -233,7 +233,7 @@ async function generateImageWithGemini(payload, instruction) {
       if (baseImage?.data && baseImage?.mimeType) {
         parts.push({ text: "BASE_IMAGE: imagen a editar sin selección activa." });
         parts.push({
-          inline_data: {  // ¡CORREGIDO!
+          inline_data: {
             mime_type: baseImage.mimeType,
             data: baseImage.data
           }
@@ -244,10 +244,10 @@ async function generateImageWithGemini(payload, instruction) {
     // Prompt del usuario
     parts.push({ text: `PROMPT_USUARIO:\n${prompt}` });
     
-    // Configuración de generación
+    // Configuración de generación - CORREGIDO para usar candidateCount solicitado
     const genConfig = {
       responseModalities: ["IMAGE"],
-      candidateCount: 1
+      candidateCount: Math.min(Math.max(candidateCount, 1), 4) // Asegurar límite entre 1-4
     };
     
     // Configuración específica por modelo
@@ -263,7 +263,7 @@ async function generateImageWithGemini(payload, instruction) {
       }
     }
     
-    console.log(`🚀 Llamando a Gemini API con modelo: ${model}, operación: ${operation}`);
+    console.log(`🚀 Llamando a Gemini API con modelo: ${model}, operación: ${operation}, candidatos: ${genConfig.candidateCount}`);
     console.log(`📝 Prompt: "${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}"`);
     
     // Llamada a API con timeout
@@ -313,25 +313,37 @@ async function generateImageWithGemini(payload, instruction) {
       const data = await response.json();
       console.log('✅ Respuesta exitosa de Gemini API');
       
-      const candidate = data.candidates?.[0];
-      if (!candidate) {
-        throw new Error('No se obtuvo candidato en la respuesta de Gemini');
+      // CORREGIDO: devolver múltiples candidatos si existen
+      const candidates = data.candidates || [];
+      if (candidates.length === 0) {
+        throw new Error('No se obtuvieron candidatos en la respuesta de Gemini');
       }
       
-      if (candidate.finishReason === 'IMAGE_SAFETY') {
-        console.warn('⚠️ Imagen rechazada por motivos de seguridad');
-        throw new Error('La imagen fue rechazada por políticas de seguridad. Modifica tu prompt.');
+      // Procesar todos los candidatos válidos
+      const imageResults = [];
+      for (const candidate of candidates) {
+        if (candidate.finishReason === 'IMAGE_SAFETY') {
+          console.warn('⚠️ Candidato rechazado por motivos de seguridad');
+          continue;
+        }
+        
+        const imagePart = candidate.content?.parts?.find(p => p.inlineData?.data);
+        if (!imagePart) {
+          console.warn('⚠️ Candidato sin imagen válida');
+          continue;
+        }
+        
+        imageResults.push({
+          dataUrl: `${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`,
+          candidate
+        });
       }
       
-      const imagePart = candidate.content?.parts?.find(p => p.inlineData?.data);
-      if (!imagePart) {
-        throw new Error('No se encontró imagen en la respuesta de Gemini');
+      if (imageResults.length === 0) {
+        throw new Error('No se encontraron imágenes válidas en la respuesta de Gemini');
       }
       
-      return {
-        dataUrl: `${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`,
-        candidate
-      };
+      return imageResults;
     } catch (error) {
       clearTimeout(timeoutId);
       
@@ -414,6 +426,7 @@ app.post('/api/generate', async (req, res) => {
     const payload = req.body;
     const model = payload.model;
     const prompt = payload.prompt;
+    const candidateCountRequested = payload.candidateCount || 1;
     
     // Validar payload
     if (!model || !prompt) {
@@ -431,9 +444,9 @@ app.post('/api/generate', async (req, res) => {
     }
     
     const costPerImage = MODEL_COSTS[model];
-    const totalCost = costPerImage;
+    const totalCost = costPerImage * candidateCountRequested;
     
-    console.log(`💰 Costo de operación: ${totalCost} créditos. Créditos disponibles: ${user.creditsBalance}`);
+    console.log(`💰 Costo de operación: ${totalCost} créditos (${candidateCountRequested} variaciones × ${costPerImage} créditos). Créditos disponibles: ${user.creditsBalance}`);
     
     if (user.creditsBalance < totalCost) {
       return res.status(400).json({ 
@@ -499,11 +512,20 @@ SALIDA: Exclusivamente la imagen resultante debe ser de la más alta calidad en 
         `.trim();
     }
     
-    // Generar imagen
-    const result = await generateImageWithGemini(payload, instruction);
+    // Generar imagen(s) - ahora devuelve un array
+    const results = await generateImageWithGemini({...payload, candidateCount: candidateCountRequested}, instruction);
     
-    // Actualizar créditos
-    const remainingCredits = user.creditsBalance - totalCost;
+    // Verificar que se generaron suficientes imágenes
+    if (results.length < candidateCountRequested) {
+      console.warn(`⚠️ Se solicitaron ${candidateCountRequested} variaciones pero solo se generaron ${results.length}`);
+    }
+    
+    console.log(`✅ Generadas ${results.length} imágenes exitosamente`);
+    
+    // Actualizar créditos (solo por las imágenes generadas realmente)
+    const actualImagesGenerated = results.length;
+    const actualCost = costPerImage * actualImagesGenerated;
+    const remainingCredits = user.creditsBalance - actualCost;
     const { users, transactions } = await connectToDatabase();
     
     const updateResult = await users.updateOne(
@@ -516,30 +538,35 @@ SALIDA: Exclusivamente la imagen resultante debe ser de la más alta calidad en 
       throw new Error('Error actualizando créditos del usuario');
     }
     
-    console.log(`✅ Créditos actualizados: ${user.creditsBalance} → ${remainingCredits}`);
+    console.log(`✅ Créditos actualizados: ${user.creditsBalance} → ${remainingCredits} (costo: ${actualCost})`);
     
     // Registrar transacción
     await transactions.insertOne({
       userId: user._id,
       operation: operationType,
       model: model,
-      creditsUsed: totalCost,
+      creditsUsed: actualCost,
       creditsRemaining: remainingCredits,
       timestamp: new Date(),
       success: true,
-      prompt: prompt.substring(0, 150) + (prompt.length > 150 ? '...' : '')
+      prompt: prompt.substring(0, 150) + (prompt.length > 150 ? '...' : ''),
+      requestedCount: candidateCountRequested,
+      actualCount: actualImagesGenerated
     });
     
     console.log('✅ Transacción registrada exitosamente');
     
     res.json({
       success: true,
-      dataUrl: result.dataUrl,
-      creditsUsed: totalCost,
-      remainingCredits: remainingCredits
+      dataUrls: results.map(r => r.dataUrl), // Devolver array de URLs
+      creditsUsed: actualCost,
+      remainingCredits: remainingCredits,
+      actualCount: actualImagesGenerated,
+      requestedCount: candidateCountRequested
     });
   } catch (error) {
     console.error('❌ Error en /api/generate:', error.message);
+    console.error('Stack trace:', error.stack);
     
     // Registrar transacción fallida si tenemos el usuario
     if (user) {
@@ -554,7 +581,9 @@ SALIDA: Exclusivamente la imagen resultante debe ser de la más alta calidad en 
           timestamp: new Date(),
           success: false,
           errorMessage: error.message.substring(0, 200),
-          prompt: req.body.prompt?.substring(0, 150) + (req.body.prompt?.length > 150 ? '...' : '')
+          prompt: req.body.prompt?.substring(0, 150) + (req.body.prompt?.length > 150 ? '...' : ''),
+          requestedCount: req.body.candidateCount || 1,
+          actualCount: 0
         });
         console.log('✅ Transacción fallida registrada');
       } catch (logError) {
@@ -583,7 +612,6 @@ SALIDA: Exclusivamente la imagen resultante debe ser de la más alta calidad en 
       statusCode = 504;
       userMessage = 'La operación tardó demasiado. Intenta con un prompt más simple.';
     }
-    // Nuevo caso para el error de fetch
     else if (error.message.includes('fetch is not a function') || 
              error.message.includes('fetch no está disponible')) {
       statusCode = 503;
@@ -593,7 +621,7 @@ SALIDA: Exclusivamente la imagen resultante debe ser de la más alta calidad en 
     res.status(statusCode).json({
       success: false,
       message: userMessage,
-      details: error.message // Solo para debugging, en producción quitar
+      details: error.message
     });
   }
 });
