@@ -197,7 +197,7 @@ async function generateImageWithGemini(payload, instruction) {
           text: `REFERENCE_${i + 1}: guía SOLO de estilo/continuidad. Usa su paleta de color, iluminación y textura, pero NO copies su geometría ni encuadre 1:1.`
         });
         parts.push({
-          inline_data: { 
+          inline_data: {  // ¡CORREGIDO! inline_data: { en lugar de inline_ {
             mime_type: ref.mimeType,
             data: ref.data
           }
@@ -211,7 +211,7 @@ async function generateImageWithGemini(payload, instruction) {
       if (maskImage?.data && maskImage?.mimeType) {
         parts.push({ text: "MASK: Define el área a modificar. BLANCO = zona a modificar, NEGRO = zona a conservar intacta." });
         parts.push({
-          inline_data: {
+          inline_data: {  // ¡CORREGIDO!
             mime_type: maskImage.mimeType,
             data: maskImage.data
           }
@@ -222,7 +222,7 @@ async function generateImageWithGemini(payload, instruction) {
       if (baseImage?.data && baseImage?.mimeType) {
         parts.push({ text: "BASE_CROP: La imagen principal que DEBES editar. Es la última imagen antes de este texto." });
         parts.push({
-          inline_data: {
+          inline_data: {  // ¡CORREGIDO!
             mime_type: baseImage.mimeType,
             data: baseImage.data
           }
@@ -233,7 +233,7 @@ async function generateImageWithGemini(payload, instruction) {
       if (baseImage?.data && baseImage?.mimeType) {
         parts.push({ text: "BASE_IMAGE: imagen a editar sin selección activa." });
         parts.push({
-          inline_data: {
+          inline_data: {  // ¡CORREGIDO!
             mime_type: baseImage.mimeType,
             data: baseImage.data
           }
@@ -391,46 +391,6 @@ const MODEL_COSTS = {
   "gemini-3-pro-image-preview": 32
 };
 
-// NUEVA FUNCIÓN: Generar múltiples variaciones
-async function generateMultipleVariations(payload, instruction, count) {
-  const results = [];
-  const errors = [];
-  
-  console.log(`🔄 Generando ${count} variaciones...`);
-  
-  for (let i = 0; i < count; i++) {
-    try {
-      console.log(`🔄 Generando variación ${i + 1} de ${count}...`);
-      
-      // Añadir sufijo único al prompt para obtener variaciones diferentes
-      const variationPayload = {
-        ...payload,
-        prompt: `${payload.prompt} (variación ${i + 1})`
-      };
-      
-      const result = await generateImageWithGemini(variationPayload, instruction);
-      results.push(result.dataUrl);
-      
-      // Pequeña pausa entre solicitudes para evitar límites de tasa
-      if (i < count - 1) {
-        await new Promise(resolve => setTimeout(resolve, 750));
-      }
-      
-      console.log(`✅ Variación ${i + 1} generada exitosamente`);
-    } catch (error) {
-      console.error(`❌ Error generando variación ${i + 1}:`, error.message);
-      errors.push(error.message);
-      // No lanzar error para continuar con las demás variaciones
-    }
-  }
-  
-  if (results.length === 0) {
-    throw new Error('No se pudo generar ninguna variación exitosamente. Errores: ' + errors.join(', '));
-  }
-  
-  return results;
-}
-
 app.post('/api/generate', async (req, res) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader?.split(' ')[1];
@@ -454,7 +414,6 @@ app.post('/api/generate', async (req, res) => {
     const payload = req.body;
     const model = payload.model;
     const prompt = payload.prompt;
-    const candidateCount = parseInt(payload.candidateCount) || 1;
     
     // Validar payload
     if (!model || !prompt) {
@@ -472,7 +431,7 @@ app.post('/api/generate', async (req, res) => {
     }
     
     const costPerImage = MODEL_COSTS[model];
-    const totalCost = costPerImage * candidateCount;
+    const totalCost = costPerImage;
     
     console.log(`💰 Costo de operación: ${totalCost} créditos. Créditos disponibles: ${user.creditsBalance}`);
     
@@ -495,7 +454,7 @@ ENTRADAS (en orden):
   3) BASE_CROP: La imagen principal que DEBES editar. Es la última imagen antes de este texto.
 
 REGLA PRINCIPAL:
-- Modifica la Imagen BASE_CROP. aplicando única y literalmente los cambios indicados en el Prompt. No realices ninguna alteración creativa o no solicitada.
+- Modifica la Imagen BASE_CROP aplicando única y literalmente los cambios del Prompt. No realices ninguna alteración creativa o no solicitada.
 
 REGLA DE CONSERVACIÓN:
 - Todos los aspectos de la Imagen BASE_CROP (composición, objetos, colores, texturas, estilo de iluminación y atmósfera visual, pose, etc.) deben permanecer 100% idénticos a menos que el prompt ordene explícitamente su modificación.
@@ -540,30 +499,11 @@ SALIDA: Exclusivamente la imagen resultante debe ser de la más alta calidad en 
         `.trim();
     }
     
-    // Generar imágenes (múltiples si candidateCount > 1)
-    let dataUrls = [];
+    // Generar imagen
+    const result = await generateImageWithGemini(payload, instruction);
     
-    if (candidateCount === 1) {
-      // Generar una sola imagen
-      const result = await generateImageWithGemini(payload, instruction);
-      dataUrls = [result.dataUrl];
-    } else {
-      // Generar múltiples variaciones
-      dataUrls = await generateMultipleVariations(payload, instruction, candidateCount);
-    }
-    
-    // Filtrar resultados vacíos o nulos
-    const validDataUrls = dataUrls.filter(url => url && url.trim() !== '');
-    
-    if (validDataUrls.length === 0) {
-      throw new Error('No se generaron imágenes válidas');
-    }
-    
-    // Actualizar créditos (solo por las imágenes generadas exitosamente)
-    const successfulCount = validDataUrls.length;
-    const creditsUsed = costPerImage * successfulCount;
-    const remainingCredits = user.creditsBalance - creditsUsed;
-    
+    // Actualizar créditos
+    const remainingCredits = user.creditsBalance - totalCost;
     const { users, transactions } = await connectToDatabase();
     
     const updateResult = await users.updateOne(
@@ -583,22 +523,20 @@ SALIDA: Exclusivamente la imagen resultante debe ser de la más alta calidad en 
       userId: user._id,
       operation: operationType,
       model: model,
-      creditsUsed: creditsUsed,
+      creditsUsed: totalCost,
       creditsRemaining: remainingCredits,
       timestamp: new Date(),
       success: true,
-      prompt: prompt.substring(0, 150) + (prompt.length > 150 ? '...' : ''),
-      variationsCount: successfulCount
+      prompt: prompt.substring(0, 150) + (prompt.length > 150 ? '...' : '')
     });
     
     console.log('✅ Transacción registrada exitosamente');
     
     res.json({
       success: true,
-      dataUrls: validDataUrls,
-      creditsUsed: creditsUsed,
-      remainingCredits: remainingCredits,
-      variationsCount: successfulCount
+      dataUrl: result.dataUrl,
+      creditsUsed: totalCost,
+      remainingCredits: remainingCredits
     });
   } catch (error) {
     console.error('❌ Error en /api/generate:', error.message);
@@ -616,8 +554,7 @@ SALIDA: Exclusivamente la imagen resultante debe ser de la más alta calidad en 
           timestamp: new Date(),
           success: false,
           errorMessage: error.message.substring(0, 200),
-          prompt: req.body.prompt?.substring(0, 150) + (req.body.prompt?.length > 150 ? '...' : ''),
-          variationsCount: req.body.candidateCount || 1
+          prompt: req.body.prompt?.substring(0, 150) + (req.body.prompt?.length > 150 ? '...' : '')
         });
         console.log('✅ Transacción fallida registrada');
       } catch (logError) {
@@ -646,6 +583,7 @@ SALIDA: Exclusivamente la imagen resultante debe ser de la más alta calidad en 
       statusCode = 504;
       userMessage = 'La operación tardó demasiado. Intenta con un prompt más simple.';
     }
+    // Nuevo caso para el error de fetch
     else if (error.message.includes('fetch is not a function') || 
              error.message.includes('fetch no está disponible')) {
       statusCode = 503;
@@ -655,7 +593,7 @@ SALIDA: Exclusivamente la imagen resultante debe ser de la más alta calidad en 
     res.status(statusCode).json({
       success: false,
       message: userMessage,
-      details: error.message
+      details: error.message // Solo para debugging, en producción quitar
     });
   }
 });
