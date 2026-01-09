@@ -199,7 +199,7 @@ async function generateImageWithGemini(payload, instruction) {
         parts.push({
           inline_data: {
             mime_type: ref.mimeType,
-            data: ref.data
+             ref.data
           }
         });
       }
@@ -213,7 +213,7 @@ async function generateImageWithGemini(payload, instruction) {
         parts.push({
           inline_data: {
             mime_type: maskImage.mimeType,
-            data: maskImage.data
+             maskImage.data
           }
         });
       }
@@ -224,7 +224,7 @@ async function generateImageWithGemini(payload, instruction) {
         parts.push({
           inline_data: {
             mime_type: baseImage.mimeType,
-            data: baseImage.data
+             baseImage.data
           }
         });
       }
@@ -235,7 +235,7 @@ async function generateImageWithGemini(payload, instruction) {
         parts.push({
           inline_data: {
             mime_type: baseImage.mimeType,
-            data: baseImage.data
+             baseImage.data
           }
         });
       }
@@ -328,6 +328,7 @@ async function generateImageWithGemini(payload, instruction) {
         throw new Error('No se encontró imagen en la respuesta de Gemini');
       }
       
+      // CORREGIDO: Devolver el formato correcto para miniaturas
       return {
         dataUrl: `${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`,
         candidate
@@ -532,9 +533,10 @@ SALIDA: Exclusivamente la imagen resultante debe ser de la más alta calidad en 
     
     console.log('✅ Transacción registrada exitosamente');
     
+    // CORREGIDO: Formato correcto para miniaturas en el frontend
     res.json({
       success: true,
-      dataUrl: result.dataUrl,
+      dataUrl: `data:${result.dataUrl}`, // Asegurar prefijo data:
       creditsUsed: totalCost,
       remainingCredits: remainingCredits
     });
