@@ -381,7 +381,7 @@ ENTRADAS (en orden):
 2) MASK: Máscara en escala de grises. BLANCO = zona a modificar, NEGRO = zona a conservar intacta.
 3) BASE_CROP: La imagen principal que DEBES editar. Es la última imagen antes de este texto.
 REGLA PRINCIPAL:
-- Modifica la Imagen BASE_CROP aplicando única y literalmente los cambios del Prompt. No realices ninguna alteración creativa o no solicitada.
+- Modifica la Imagen BASE_CROP. aplicando única y literalmente los cambios indicados en el Prompt. No realices ninguna alteración creativa o no solicitada.
 REGLA DE CONSERVACIÓN:
 - Todos los aspectos de la Imagen BASE_CROP (composición, objetos, colores, texturas, estilo de iluminación y atmósfera visual, pose, etc.) deben permanecer 100% idénticos a menos que el prompt ordene explícitamente su modificación.
 REGLAS DE APLICACIÓN:
